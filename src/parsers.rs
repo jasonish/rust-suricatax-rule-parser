@@ -60,7 +60,9 @@ pub(crate) fn parse_u64<'a>(
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ArrayElement {
     String(String),
+    NotElement(String),
     Array(Vec<ArrayElement>),
+    NotArray(Vec<ArrayElement>),
 }
 
 pub fn parse_array(input: &str) -> IResult<&str, Vec<ArrayElement>, RuleParseError<&str>> {
@@ -70,6 +72,7 @@ pub fn parse_array(input: &str) -> IResult<&str, Vec<ArrayElement>, RuleParseErr
     let mut token = String::new();
     let mut depth = 0;
     let mut offset = 0;
+    let mut neg = false;
 
     // We might not always have an array, if not, parse a scalar and
     // return it as an array.
@@ -88,7 +91,12 @@ pub fn parse_array(input: &str) -> IResult<&str, Vec<ArrayElement>, RuleParseErr
             ']' => {
                 if !token.is_empty() {
                     if let Some(top) = stack.last_mut() {
-                        top.push(ArrayElement::String(token.clone()));
+                        if neg {
+                            top.push(ArrayElement::NotElement(token.clone()));
+                        } else {
+                            top.push(ArrayElement::String(token.clone()));
+                        }
+                        neg = false;
                         token.clear();
                     } else {
                         return Err(nom::Err::Error(RuleParseError::UnbalancedArray));
@@ -112,12 +120,20 @@ pub fn parse_array(input: &str) -> IResult<&str, Vec<ArrayElement>, RuleParseErr
             ',' => {
                 if !token.is_empty() {
                     if let Some(top) = stack.last_mut() {
-                        top.push(ArrayElement::String(token.clone()));
+                        if neg {
+                            top.push(ArrayElement::NotElement(token.clone()));
+                        } else {
+                            top.push(ArrayElement::String(token.clone()));
+                        }
+                        neg = false;
                         token.clear();
                     } else {
                         return Err(nom::Err::Error(RuleParseError::UnbalancedArray));
                     }
                 }
+            }
+            '!' => {
+                neg = true;
             }
             _ => token.push(ch),
         }
@@ -432,6 +448,14 @@ mod test {
                 ]),
             ]
         );
+    }
+
+    #[test]
+    fn test_parse_array_neg() {
+        let input = "[!aaa,bbb]";
+        let (_rem, array) = parse_array(input).unwrap();
+        dbg!(array);
+        panic!();
     }
 
     #[test]
