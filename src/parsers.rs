@@ -55,20 +55,20 @@ pub(crate) fn parse_u64<'a>(
     feature = "serde_support",
     derive(Serialize, Deserialize),
     serde(rename_all = "snake_case"),
-    serde(untagged)
+    //serde(untagged)
 )]
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ArrayElement {
-    String(String),
-    NotElement(String),
+    Element(String),
+    NegElement(String),
     Array(Vec<ArrayElement>),
-    NotArray(Vec<ArrayElement>),
+    NegArray(Vec<ArrayElement>),
 }
 
 pub fn parse_array(input: &str) -> IResult<&str, Vec<ArrayElement>, RuleParseError<&str>> {
     // Use a stack to avoid recursion. Should probably still set a
     // size bound on it.
-    let mut stack: Vec<Vec<ArrayElement>> = vec![Vec::new()];
+    let mut stack: Vec<(bool, Vec<ArrayElement>)> = vec![(true, Vec::new())];
     let mut token = String::new();
     let mut depth = 0;
     let mut offset = 0;
@@ -78,7 +78,7 @@ pub fn parse_array(input: &str) -> IResult<&str, Vec<ArrayElement>, RuleParseErr
     // return it as an array.
     if !input.starts_with('[') {
         let (input, scalar) = parse_token(input)?;
-        return Ok((input, vec![ArrayElement::String(scalar.to_string())]));
+        return Ok((input, vec![ArrayElement::Element(scalar.to_string())]));
     }
 
     for ch in input.chars() {
@@ -86,15 +86,16 @@ pub fn parse_array(input: &str) -> IResult<&str, Vec<ArrayElement>, RuleParseErr
         match ch {
             '[' => {
                 depth += 1;
-                stack.push(Vec::new())
+                stack.push((neg, Vec::new()));
+                neg = false;
             }
             ']' => {
                 if !token.is_empty() {
-                    if let Some(top) = stack.last_mut() {
+                    if let Some((_, top)) = stack.last_mut() {
                         if neg {
-                            top.push(ArrayElement::NotElement(token.clone()));
+                            top.push(ArrayElement::NegElement(token.trim().to_string()));
                         } else {
-                            top.push(ArrayElement::String(token.clone()));
+                            top.push(ArrayElement::Element(token.trim().to_string()));
                         }
                         neg = false;
                         token.clear();
@@ -102,11 +103,15 @@ pub fn parse_array(input: &str) -> IResult<&str, Vec<ArrayElement>, RuleParseErr
                         return Err(nom::Err::Error(RuleParseError::UnbalancedArray));
                     }
                 }
-                let last = stack
+                let (neg, last) = stack
                     .pop()
                     .ok_or(nom::Err::Error(RuleParseError::UnbalancedArray))?;
-                if let Some(top) = stack.last_mut() {
-                    top.push(ArrayElement::Array(last));
+                if let Some((_, top)) = stack.last_mut() {
+                    if neg {
+                        top.push(ArrayElement::NegArray(last));
+                    } else {
+                        top.push(ArrayElement::Array(last));
+                    }
                 } else {
                     return Err(nom::Err::Error(RuleParseError::UnbalancedArray));
                 }
@@ -119,11 +124,11 @@ pub fn parse_array(input: &str) -> IResult<&str, Vec<ArrayElement>, RuleParseErr
             }
             ',' => {
                 if !token.is_empty() {
-                    if let Some(top) = stack.last_mut() {
+                    if let Some((_, top)) = stack.last_mut() {
                         if neg {
-                            top.push(ArrayElement::NotElement(token.clone()));
+                            top.push(ArrayElement::NegElement(token.trim().to_string()));
                         } else {
-                            top.push(ArrayElement::String(token.clone()));
+                            top.push(ArrayElement::Element(token.trim().to_string()));
                         }
                         neg = false;
                         token.clear();
@@ -140,15 +145,15 @@ pub fn parse_array(input: &str) -> IResult<&str, Vec<ArrayElement>, RuleParseErr
     }
 
     if !token.is_empty() {
-        if let Some(top) = stack.last_mut() {
-            top.push(ArrayElement::String(token.clone()));
+        if let Some((_, top)) = stack.last_mut() {
+            top.push(ArrayElement::Element(token.clone()));
         } else {
             return Err(nom::Err::Error(RuleParseError::UnbalancedArray));
         }
     }
 
     // Double unwrap as we used a stack to avoid recursion.
-    if let Some(mut stack) = stack.pop() {
+    if let Some((_, mut stack)) = stack.pop() {
         if let Some(ArrayElement::Array(stack)) = stack.pop() {
             return Ok((&input[offset..], stack));
         }
@@ -416,7 +421,7 @@ mod test {
         let input = "[a]xxx";
         let (rem, array) = parse_array(input).unwrap();
         assert_eq!(rem, "xxx");
-        assert_eq!(array, vec![ArrayElement::String("a".to_string())]);
+        assert_eq!(array, vec![ArrayElement::Element("a".to_string())]);
 
         let input = "[a,bbb]xxx";
         let (rem, array) = parse_array(input).unwrap();
@@ -424,8 +429,8 @@ mod test {
         assert_eq!(
             array,
             vec![
-                ArrayElement::String("a".to_string()),
-                ArrayElement::String("bbb".to_string())
+                ArrayElement::Element("a".to_string()),
+                ArrayElement::Element("bbb".to_string())
             ]
         );
 
@@ -435,16 +440,16 @@ mod test {
         assert_eq!(
             array,
             vec![
-                ArrayElement::String("a".to_string()),
+                ArrayElement::Element("a".to_string()),
                 ArrayElement::Array(vec![
-                    ArrayElement::String("bbb".to_string()),
-                    ArrayElement::String("ccc".to_string()),
-                    ArrayElement::Array(vec![ArrayElement::String("xxx".to_string())]),
+                    ArrayElement::Element("bbb".to_string()),
+                    ArrayElement::Element("ccc".to_string()),
+                    ArrayElement::Array(vec![ArrayElement::Element("xxx".to_string())]),
                 ]),
-                ArrayElement::String("ddd".to_string()),
+                ArrayElement::Element("ddd".to_string()),
                 ArrayElement::Array(vec![
-                    ArrayElement::String("eee".to_string()),
-                    ArrayElement::String("fff".to_string()),
+                    ArrayElement::Element("eee".to_string()),
+                    ArrayElement::Element("fff".to_string()),
                 ]),
             ]
         );
@@ -454,8 +459,29 @@ mod test {
     fn test_parse_array_neg() {
         let input = "[!aaa,bbb]";
         let (_rem, array) = parse_array(input).unwrap();
-        dbg!(array);
+        assert_eq!(
+            array,
+            vec![
+                ArrayElement::NegElement("aaa".to_string()),
+                ArrayElement::Element("bbb".to_string())
+            ]
+        );
+
+        let input = "[aaa,![bbb,ccc]]";
+        let input = "[$EXTERNAL_NET, !$HOME_NET]";
+        let input = "[192.168.0.0/16,![192.168.1.0/24,192.168.3.0/24],!192.168.5.0/24]";
+        let input = "[0-1024,8080]";
+        let (_rem, array) = parse_array(input).unwrap();
+        dbg!(&array);
+        println!("{}", serde_json::to_string(&array).unwrap());
         panic!();
+        // assert_eq!(
+        //     array,
+        //     vec![
+        //         ArrayElement::NotElement("aaa".to_string()),
+        //         ArrayElement::String("bbb".to_string())
+        //     ]
+        // );
     }
 
     #[test]

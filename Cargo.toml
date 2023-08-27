@@ -12,9 +12,10 @@ members = [".", "rjs"]
 
 [features]
 default = ["serde_support"]
-serde_support = ["serde"]
+serde_support = ["serde", "serde_json"]
 
 [dependencies]
 nom = "7.1.3"
 num-traits = "0.2.15"
 serde = { version = "1.0.164", default_features = false, features = ["std", "derive"], optional = true }
+serde_json = { version = "1.0.99", optional = true }
